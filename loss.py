@@ -19,5 +19,5 @@ class RateDistortionLoss(nn.Module):
         mse_loss = F.mse_loss(x, x_hat)
 
         # final loss term
-        loss = mse_loss + self.lmbda * bpp_loss_y + self.lmbda * bpp_loss_z
-        return loss
+        loss = self.lmbda * mse_loss + bpp_loss_y + bpp_loss_z
+        return {'total':loss,'distortion':mse_loss}

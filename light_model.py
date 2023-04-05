@@ -9,45 +9,63 @@ from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.layers import GDN, MaskedConv2d
 from base import CompressionModel
 
-# mbt2018
-class Compressor(CompressionModel):
+def ds_Conv(ch_in, ch_out, kernel, stride):
+    return nn.Sequential(nn.Conv2d(ch_in, ch_in, kernel_size=kernel, stride=stride, padding=kernel // 2, groups=ch_in),
+                        nn.Conv2d(ch_in, ch_out, kernel_size=1, stride=1))
+
+def ds_ConvTranspose(ch_in, ch_out, kernel, stride):
+    return nn.Sequential(nn.ConvTranspose2d(ch_in, ch_in, kernel_size=kernel, stride=stride, padding=kernel // 2, output_padding = stride-1, groups=ch_in),
+                        nn.Conv2d(ch_in, ch_out, kernel_size=1, stride=1))
+
+class Light_Compressor(CompressionModel):
     def __init__(self, N=192, M=192):
         super().__init__()
         self.entropy_bottleneck = EntropyBottleneck(N)
+
+        # self.g_s = nn.Sequential(
+        #     nn.ConvTranspose2d(M, N, kernel_size=5, stride=2, padding=2, output_padding=1,),
+        #     GDN(N, inverse=True),
+        #     nn.ConvTranspose2d(N, N, kernel_size=5, stride=2, padding=2, output_padding=1,),
+        #     GDN(N, inverse=True),
+        #     nn.ConvTranspose2d(N, N, kernel_size=5, stride=2, padding=2, output_padding=1,),
+        #     GDN(N, inverse=True),
+        #     nn.ConvTranspose2d(N, 3, kernel_size=5, stride=2, padding=2, output_padding=1,),
+        # )
+
         self.g_a = nn.Sequential(
-            nn.Conv2d(3, N, kernel_size=5, stride=2, padding=2),
+            ds_Conv(3, N, 5, 2),
             GDN(N),
-            nn.Conv2d(N, N, kernel_size=5, stride=2, padding=2),
+            ds_Conv(N, N, 5, 2),
             GDN(N),
-            nn.Conv2d(N, N, kernel_size=5, stride=2, padding=2),
+            ds_Conv(N, N, 5, 2),
             GDN(N),
-            nn.Conv2d(N, M, kernel_size=5, stride=2, padding=2),
+            ds_Conv(N, M, 5, 2),
         )
 
         self.g_s = nn.Sequential(
-            nn.ConvTranspose2d(M, N, kernel_size=5, stride=2, padding=2, output_padding=1,),
+            ds_ConvTranspose(M, N, 5, 2),
             GDN(N, inverse=True),
-            nn.ConvTranspose2d(N, N, kernel_size=5, stride=2, padding=2, output_padding=1,),
+            ds_ConvTranspose(N, N, 5, 2),
             GDN(N, inverse=True),
-            nn.ConvTranspose2d(N, N, kernel_size=5, stride=2, padding=2, output_padding=1,),
+            ds_ConvTranspose(N, N, 5, 2),
             GDN(N, inverse=True),
-            nn.ConvTranspose2d(N, 3, kernel_size=5, stride=2, padding=2, output_padding=1,),
+            ds_ConvTranspose(N, 3, 5, 2),
         )
 
         self.h_a = nn.Sequential(
-            nn.Conv2d(M, N, stride=1, kernel_size=3, padding=1),
+            ds_Conv(M, N, 3, 1),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(N, N, stride=2, kernel_size=5, padding=2),
+            ds_Conv(N, N, 5, 2),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(N, N, stride=2, kernel_size=5, padding=2),
+            ds_Conv(N, N, 5, 2),
         )
 
         self.h_s = nn.Sequential(
-            nn.ConvTranspose2d(N, M, stride=2, kernel_size=5, padding=2, output_padding=1,),
+            ds_ConvTranspose(N, M, 5, 2),
             nn.LeakyReLU(inplace=True),
-            nn.ConvTranspose2d(M, M * 3 // 2, stride=2, kernel_size=5, padding=2, output_padding=1,),
+            ds_ConvTranspose(M, M * 3 // 2, 5, 2),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(M * 3 // 2, M * 2, stride=1, kernel_size=3, padding=1),
+            ds_Conv(M * 3 // 2, M * 2, 3, 1),
         )
 
         self.entropy_parameters = nn.Sequential(
@@ -257,80 +275,3 @@ class Compressor(CompressionModel):
                 hp = h + padding
                 wp = w + padding
                 y_hat[:, :, hp : hp + 1, wp : wp + 1] = rv
-    
-    @classmethod
-    def from_state_dict(cls, state_dict):
-        """Return a new model instance from `state_dict`."""
-        N = state_dict["g_a.0.weight"].size(0)
-        M = state_dict["g_a.6.weight"].size(0)
-        net = cls(N, M)
-        net.load_state_dict(state_dict)
-        return net
-
-    # def forward(self, x):
-    #     import time
-    #     print(' ')
-    #     start_time = time.time()
-
-    #     y = self.g_a(x)
-
-    #     end_time = time.time()
-    #     print('g_a:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     z = self.h_a(y)
-
-    #     end_time = time.time()
-    #     print('h_a:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     z_hat, z_likelihoods = self.entropy_bottleneck(z)
-
-    #     end_time = time.time()
-    #     print('entropy_bottleneck:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     params = self.h_s(z_hat)
-
-    #     end_time = time.time()
-    #     print('h_s:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     y_hat = self.gaussian_conditional.quantize(
-    #         y, "noise" if self.training else "dequantize"
-    #     )
-
-    #     end_time = time.time()
-    #     print('quantize:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     ctx_params = self.context_prediction(y_hat)
-
-    #     end_time = time.time()
-    #     print('context:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     gaussian_params = self.entropy_parameters(
-    #         torch.cat((params, ctx_params), dim=1)
-    #     )
-
-    #     end_time = time.time()
-    #     print('entropy parameters:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     scales_hat, means_hat = gaussian_params.chunk(2, 1)
-    #     _, y_likelihoods = self.gaussian_conditional(y, scales_hat, means=means_hat)
-
-    #     end_time = time.time()
-    #     print('GMM:', end_time-start_time)
-    #     start_time = time.time()
-
-    #     x_hat = self.g_s(y_hat)
-
-    #     end_time = time.time()
-    #     print('g_s:', end_time-start_time)
-
-    #     return {
-    #         "x_hat": x_hat,
-    #         "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
-    #     }
